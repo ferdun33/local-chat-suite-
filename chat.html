@@ -1,0 +1,176 @@
+<!-- chat.html - Локальный чат на JavaScript + WebSocket -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Локальный чат · JS + WebSocket</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #1e2a3a; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .chat-container { width: 900px; max-width: 95vw; height: 80vh; background: #ecf0f1; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .chat-header { background: #2c3e50; color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 15px; background: #fef9e8; display: flex; flex-direction: column; gap: 8px; }
+        .message { padding: 8px 12px; border-radius: 18px; max-width: 70%; word-wrap: break-word; }
+        .my-message { align-self: flex-end; background: #3498db; color: white; }
+        .other-message { align-self: flex-start; background: #ecf0f1; border: 1px solid #bdc3c7; }
+        .system-message { align-self: center; background: #f1c40f; font-size: 12px; color: #2c3e50; padding: 4px 12px; border-radius: 20px; }
+        .chat-input { display: flex; padding: 10px; background: white; border-top: 1px solid #ddd; }
+        .chat-input input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 30px; outline: none; }
+        .chat-input button { margin-left: 10px; padding: 10px 20px; background: #2ecc71; color: white; border: none; border-radius: 30px; cursor: pointer; }
+        .emoji-btn { background: #f39c12; margin-left: 5px; }
+        .file-btn { background: #9b59b6; }
+        .users-panel { width: 200px; background: #2c3e50; color: white; padding: 10px; overflow-y: auto; display: none; position: absolute; right: 0; top: 60px; border-radius: 10px; }
+    </style>
+</head>
+<body>
+<div class="chat-container">
+    <div class="chat-header">
+        <span>💬 Локальный чат (JS)</span>
+        <div>
+            <button id="themeToggle" style="background: none; border: none; color: white; cursor: pointer;">🌙</button>
+            <button id="usersBtn" style="background: none; border: none; color: white; cursor: pointer;">👥</button>
+        </div>
+    </div>
+    <div class="chat-messages" id="messages"></div>
+    <div class="chat-input">
+        <input type="text" id="messageInput" placeholder="Введите сообщение... /w ник сообщение для приватного">
+        <button id="sendBtn">➤</button>
+        <button id="emojiBtn" class="emoji-btn">😊</button>
+        <button id="fileBtn" class="file-btn">📎 Файл</button>
+        <input type="file" id="fileInput" style="display:none">
+    </div>
+</div>
+<div id="usersPanel" class="users-panel"></div>
+<script>
+    let ws;
+    let nickname = localStorage.getItem('nickname') || prompt("Введите ваш ник:", "User" + Math.floor(Math.random()*1000));
+    if (nickname) localStorage.setItem('nickname', nickname);
+    let darkTheme = false;
+    
+    function connect() {
+        ws = new WebSocket('ws://localhost:8080');
+        ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'join', nickname: nickname }));
+            addSystemMessage(`Вы подключены как ${nickname}`);
+        };
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'message') {
+                addMessage(data.nickname, data.text, data.nickname === nickname);
+            } else if (data.type === 'private') {
+                addSystemMessage(`[Приват от ${data.from}]: ${data.text}`);
+            } else if (data.type === 'users') {
+                updateUsersList(data.users);
+            } else if (data.type === 'file') {
+                handleFileMessage(data);
+            } else if (data.type === 'system') {
+                addSystemMessage(data.text);
+            }
+        };
+        ws.onclose = () => {
+            addSystemMessage("Отключено от сервера, переподключение...");
+            setTimeout(connect, 3000);
+        };
+    }
+    
+    function addMessage(sender, text, isMine) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message ${isMine ? 'my-message' : 'other-message'}`;
+        msgDiv.innerHTML = `<strong>${sender}:</strong> ${escapeHtml(text)}`;
+        document.getElementById('messages').appendChild(msgDiv);
+        scrollToBottom();
+    }
+    
+    function addSystemMessage(text) {
+        const sysDiv = document.createElement('div');
+        sysDiv.className = 'system-message';
+        sysDiv.innerText = text;
+        document.getElementById('messages').appendChild(sysDiv);
+        scrollToBottom();
+    }
+    
+    function scrollToBottom() {
+        const msgs = document.getElementById('messages');
+        msgs.scrollTop = msgs.scrollHeight;
+    }
+    
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+    
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        let text = input.value.trim();
+        if (!text) return;
+        if (text.startsWith('/w ')) {
+            const parts = text.split(' ');
+            if (parts.length >= 3) {
+                const target = parts[1];
+                const msg = parts.slice(2).join(' ');
+                ws.send(JSON.stringify({ type: 'private', target: target, text: msg }));
+                addSystemMessage(`[Вы -> ${target} (приват)]: ${msg}`);
+            } else {
+                addSystemMessage("Используйте: /w ник сообщение");
+            }
+        } else {
+            ws.send(JSON.stringify({ type: 'message', text: text }));
+            addMessage(nickname, text, true);
+        }
+        input.value = '';
+    }
+    
+    function sendFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            ws.send(JSON.stringify({ type: 'file', filename: file.name, data: base64 }));
+            addSystemMessage(`Вы отправили файл: ${file.name}`);
+        };
+        reader.readAsDataURL(file);
+    }
+    
+    function handleFileMessage(data) {
+        if (confirm(`${data.from} отправил файл "${data.filename}". Сохранить?`)) {
+            const a = document.createElement('a');
+            a.href = `data:application/octet-stream;base64,${data.data}`;
+            a.download = data.filename;
+            a.click();
+        }
+    }
+    
+    function updateUsersList(users) {
+        const panel = document.getElementById('usersPanel');
+        panel.innerHTML = '<strong>👥 Пользователи</strong><br>' + users.map(u => `• ${u}`).join('<br>');
+        panel.style.display = 'block';
+        setTimeout(() => { panel.style.display = 'none'; }, 5000);
+    }
+    
+    function toggleTheme() {
+        darkTheme = !darkTheme;
+        document.body.style.backgroundColor = darkTheme ? '#1e1e1e' : '#1e2a3a';
+        document.querySelector('.chat-container').style.backgroundColor = darkTheme ? '#2d2d2d' : '#ecf0f1';
+        document.querySelector('.chat-messages').style.backgroundColor = darkTheme ? '#2d2d2d' : '#fef9e8';
+        document.querySelector('.chat-messages').style.color = darkTheme ? '#ddd' : '#000';
+    }
+    
+    document.getElementById('sendBtn').onclick = sendMessage;
+    document.getElementById('messageInput').addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
+    document.getElementById('emojiBtn').onclick = () => {
+        const emojis = ['😀','😂','😍','🥺','😎','🔥','💯','🎉'];
+        const emoji = prompt("Выберите эмодзи: " + emojis.join(' '));
+        if (emoji) document.getElementById('messageInput').value += emoji;
+    };
+    document.getElementById('fileBtn').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('fileInput').onchange = (e) => { if(e.target.files.length) sendFile(e.target.files[0]); };
+    document.getElementById('usersBtn').onclick = () => ws.send(JSON.stringify({ type: 'getUsers' }));
+    document.getElementById('themeToggle').onclick = toggleTheme;
+    
+    connect();
+</script>
+</body>
+</html>
